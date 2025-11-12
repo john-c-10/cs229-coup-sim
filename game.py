@@ -36,7 +36,7 @@ class CoupGame:
         self.roles = []
         self.new_round()
         #discard pile
-        self.discard_pile = []
+        self.discard_pile = [0 for i in range(5)]
         #current turn
         self.current_player = 0
 
@@ -58,7 +58,7 @@ class CoupGame:
         # randomly pick one of these roles to lose
         removed_role = random.choice(available_roles)
         self.roles[player][removed_role] -= 1
-        self.discard_pile.append(removed_role)
+        self.discard_pile[removed_role] += 1
         return
 
     #check if a move is valid for the current player
@@ -188,7 +188,7 @@ class CoupGame:
         # 2: steal (blocked by Captain or Ambassador)
 
         #decide if the player wants to claim a block
-        claim = self.select_action_claim(player, block_type)
+        claim = self.select_action_claim(player,block_type)
         if not claim:
             return False
         
@@ -306,7 +306,7 @@ class CoupGame:
             'influence': self.influence.copy(),
             'roles': [r.copy() for r in self.roles],
             'deck_size': len(self.deck),
-            'discard_pile': self.discard_pile.copy(),
+            'discard_pile': self.discard_pile,
             'current_player': self.current_player
         }
 
@@ -319,7 +319,7 @@ def print_game_state(game):
         print(f"  Coins: {game.players[i]}")
         print(f"  Influence: {game.influence[i]}")
         print(f"  Roles: {[card_names[j] for j, count in enumerate(game.roles[i]) for _ in range(count)]}")
-    print(f"Discard pile: {[card_names[c] for c in game.discard_pile]}")
+    print(f"Discard pile: {[card_names[c] for c in range(5) for _ in range(game.discard_pile[c])]}")
 
 def select_move(game, player, move):
     #TODO: model to do this
