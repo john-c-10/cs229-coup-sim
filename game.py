@@ -52,6 +52,8 @@ class CoupGame:
 
     #remove random influence from a player
     def remove_influence(self, player):
+        if self.influence[player] <= 0:
+            return
         self.influence[player] -= 1
         # find indices where the player has influence (count > 0)
         available_roles = [i for i, count in enumerate(self.roles[player]) if count > 0]
@@ -204,7 +206,7 @@ class CoupGame:
         
         #check if the claim is challenged
         opponent = (player + 1) % 2
-        lie_result = self.predict_lie(opponent, claimed_card)
+        lie_result = self.predict_lie(player, claimed_card)
         if lie_result == "lie":
             return False
         elif lie_result == "no lie":
