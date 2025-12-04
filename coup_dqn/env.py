@@ -28,7 +28,6 @@ from .config import (
     STALL_THRESHOLD,
 )
 
-
 @dataclass
 class ActionResult:
     success: bool = True
@@ -41,7 +40,6 @@ class ActionResult:
     who_lost_influence: Optional[int] = None
     revealed_card: Optional[int] = None
     steal_amount: int = 0
-
 
 @dataclass
 class InfoBundle:
@@ -57,7 +55,7 @@ class InfoBundle:
     action_type: str = ""
     actor: int = 0
     target: Optional[int] = None
-    result: str = "succeeded"  # "succeeded", "blocked", "challenged"
+    result: str = "succeeded" # "succeeded", "blocked", "challenged"
     
     block_info: Dict[str, Any] = field(default_factory=dict)
     challenge_info: Dict[str, Any] = field(default_factory=dict)
@@ -81,7 +79,6 @@ class InfoBundle:
             "steal_transfer_amount": self.steal_transfer_amount,
         }
 
-
 class CoupEnv:
     
     def __init__(self, opponent_agent=None):
@@ -94,7 +91,7 @@ class CoupEnv:
         
         self.turn_count = 0
 
-        # phase: "main", "challenge_action", "block", "challenge_block"
+        # phase can be "main", "challenge_action", "block", "challenge_block"
         self.phase = "main"
         
         self.pending_action = None
@@ -449,34 +446,34 @@ class CoupEnv:
         
         if self.phase == "main":
             if coins >= 10:
-                mask[6] = True  # COUP
+                mask[6] = True # coup
             else:
-                mask[0] = True  # INCOME
-                mask[1] = True  # FOREIGN_AID
-                mask[2] = True  # TAX
-                mask[3] = True  # STEAL
-                mask[4] = True  # EXCHANGE
+                mask[0] = True # income
+                mask[1] = True # foreign aid
+                mask[2] = True # tax
+                mask[3] = True # steal
+                mask[4] = True # exchange
                 
                 if coins >= 3:
-                    mask[5] = True  # ASSASSINATE
+                    mask[5] = True # assassinate
                 
                 if coins >= 7:
-                    mask[6] = True  # COUP
+                    mask[6] = True # coup
                     
         elif self.phase == "challenge_action" or self.phase == "challenge_block":
-            mask[12] = True  # CHALLENGE
-            mask[13] = True  # ACCEPT
+            mask[12] = True # challenge
+            mask[13] = True # accept
             
         elif self.phase == "block":
-            mask[11] = True  # DECLINE_BLOCK
+            mask[11] = True # decline block
             
-            if self.pending_action == 1:  # FOREIGN_AID
-                mask[7] = True  # BLOCK_FOREIGN_AID
-            elif self.pending_action == 5:  # ASSASSINATE
-                mask[8] = True  # BLOCK_ASSASSINATION
-            elif self.pending_action == 3:  # STEAL
-                mask[9] = True  # BLOCK_STEAL_CAPTAIN
-                mask[10] = True  # BLOCK_STEAL_AMBASSADOR
+            if self.pending_action == 1: # foreign aid
+                mask[7] = True # block foreign aid
+            elif self.pending_action == 5: # assassinate
+                mask[8] = True # block assassination
+            elif self.pending_action == 3: # steal
+                mask[9] = True # block steal captain
+                mask[10] = True # block steal ambassador
         
         if not mask.any():
             if coins >= 10:
@@ -491,7 +488,7 @@ class CoupEnv:
         action: int,
         info_bundle: InfoBundle,
     ) -> Tuple[float, bool, InfoBundle]:
-        # placeholder for multi-phase implementation
+        # placeholder for multi-phase right now
         reward = 0.0
         done = self.game.is_game_over()
         self._advance_turn()
@@ -502,7 +499,7 @@ class CoupEnv:
         action: int,
         info_bundle: InfoBundle,
     ) -> Tuple[float, bool, InfoBundle]:
-        # placeholder for multi-phase implementation
+        # placeholder for multi-phase right now
         reward = 0.0
         done = self.game.is_game_over()
         self._advance_turn()
@@ -513,7 +510,7 @@ class CoupEnv:
         action: int,
         info_bundle: InfoBundle,
     ) -> Tuple[float, bool, InfoBundle]:
-        # placeholder for multi-phase implementation
+        # placeholder for multi-phase right now
         reward = 0.0
         done = self.game.is_game_over()
         self._advance_turn()
@@ -573,10 +570,8 @@ class SelfPlayEnv:
         self.env.game.current_player = original
         return mask
 
-
 def make_env(opponent_agent=None) -> CoupEnv:
     return CoupEnv(opponent_agent=opponent_agent)
-
 
 def make_self_play_env() -> SelfPlayEnv:
     return SelfPlayEnv()
