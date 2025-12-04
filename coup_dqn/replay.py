@@ -23,7 +23,6 @@ from .config import (
     DEVICE,
 )
 
-
 @dataclass
 class Transition:
     obs: np.ndarray
@@ -34,21 +33,19 @@ class Transition:
     legal_actions_mask: np.ndarray
     info: Dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class SequenceData:
-    observations: np.ndarray       # (seq_len, obs_dim)
-    actions: np.ndarray            # (seq_len,)
-    rewards: np.ndarray            # (seq_len,)
-    next_observations: np.ndarray  # (seq_len, obs_dim)
-    dones: np.ndarray              # (seq_len,)
-    legal_masks: np.ndarray        # (seq_len, num_actions)
-    init_hidden_h: Optional[np.ndarray] = None  # (num_layers, hidden_dim)
-    init_hidden_c: Optional[np.ndarray] = None  # (num_layers, hidden_dim) for LSTM
-    n_step_returns: Optional[np.ndarray] = None  # (train_len,)
-    n_step_next_obs: Optional[np.ndarray] = None  # (train_len, obs_dim)
-    n_step_dones: Optional[np.ndarray] = None    # (train_len,)
-
+    observations: np.ndarray # (seq_len, obs_dim)
+    actions: np.ndarray # (seq_len,)
+    rewards: np.ndarray # (seq_len,)
+    next_observations: np.ndarray # (seq_len, obs_dim)
+    dones: np.ndarray # (seq_len,)
+    legal_masks: np.ndarray # (seq_len, num_actions)
+    init_hidden_h: Optional[np.ndarray] = None # (num_layers, hidden_dim)
+    init_hidden_c: Optional[np.ndarray] = None # (num_layers, hidden_dim) for LSTM
+    n_step_returns: Optional[np.ndarray] = None # (train_len,)
+    n_step_next_obs: Optional[np.ndarray] = None # (train_len, obs_dim)
+    n_step_dones: Optional[np.ndarray] = None # (train_len,)
 
 class SumTree:
     
@@ -110,7 +107,6 @@ class SumTree:
         idx = self._retrieve(0, s)
         data_idx = idx - self.capacity + 1
         return idx, self.tree[idx], self.data[data_idx]
-
 
 class EpisodeBuffer:
     
@@ -304,7 +300,6 @@ class EpisodeBuffer:
         self.transitions.clear()
         self.hidden_states.clear()
 
-
 class PrioritizedSequenceReplayBuffer:
     
     def __init__(
@@ -405,7 +400,6 @@ class UniformSequenceReplayBuffer:
     def __len__(self) -> int:
         return len(self.buffer)
 
-
 def create_replay_buffer(
     capacity: int = REPLAY_BUFFER_CAPACITY,
     use_prioritized: bool = USE_PRIORITIZED_REPLAY,
@@ -414,7 +408,6 @@ def create_replay_buffer(
         return PrioritizedSequenceReplayBuffer(capacity=capacity)
     else:
         return UniformSequenceReplayBuffer(capacity=capacity)
-
 
 def collate_sequences(
     sequences: List[SequenceData],
