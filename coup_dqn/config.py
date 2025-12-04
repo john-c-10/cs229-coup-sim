@@ -40,7 +40,7 @@ NUM_ACTIONS = len(ALL_ACTIONS)
 # OBSERVATION SPACE CONFIG
 
 HISTORY_LENGTH = 10
-ACTION_ENCODING_DIM = NUM_ACTIONS + 2 # action one-hot + actor + target
+ACTION_ENCODING_DIM = NUM_ACTIONS + 2 # action (one-hot) + actor + target
 
 PUBLIC_FEATURES = 4 + NUM_CARD_TYPES # coins, influence, discard
 PRIVATE_FEATURES = NUM_CARD_TYPES # own cards
@@ -73,9 +73,9 @@ V_MAX = 10.0
 
 # REPLAY BUFFER CONFIG (R2D2 STYLE)
 
-SEQUENCE_LENGTH = 20 # total sequence length (L)
-BURN_IN_LENGTH = 5 # burn-in steps (B) to warm up LSTM hidden state
-TRAIN_LENGTH = SEQUENCE_LENGTH - BURN_IN_LENGTH # steps to train on (T = L - B)
+SEQUENCE_LENGTH = 20 # total sequence length
+BURN_IN_LENGTH = 5 # burn-in steps to warm up LSTM hidden state
+TRAIN_LENGTH = SEQUENCE_LENGTH - BURN_IN_LENGTH # steps to train on
 
 USE_PRIORITIZED_REPLAY = True
 PER_ALPHA = 0.6

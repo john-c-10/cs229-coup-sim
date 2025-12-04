@@ -25,7 +25,7 @@ from .config import (
     OBS_DIM,
 )
 
-
+# parametric noise layer (replaces eps-greedy exploration)
 class NoisyLinear(nn.Module):
     
     def __init__(self, in_features: int, out_features: int, std_init: float = NOISY_STD_INIT):
@@ -71,7 +71,6 @@ class NoisyLinear(nn.Module):
             bias = self.bias_mu
         return F.linear(x, weight, bias)
 
-
 class Torso(nn.Module):
     
     def __init__(self, input_dim: int, hidden_dims: Tuple[int, ...] = TORSO_HIDDEN_DIMS):
@@ -90,7 +89,7 @@ class Torso(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-
+# handles partial observability via LSTM/GRU
 class RecurrentCore(nn.Module):
     
     def __init__(
@@ -142,7 +141,7 @@ class RecurrentCore(nn.Module):
             return (h, c)
         return (h,)
 
-
+# dueling head (here there are separate value and advantage streams)
 class DuelingHead(nn.Module):
     
     def __init__(
@@ -183,7 +182,6 @@ class DuelingHead(nn.Module):
             self.value_fc2.reset_noise()
             self.advantage_fc1.reset_noise()
             self.advantage_fc2.reset_noise()
-
 
 class DistributionalDuelingHead(nn.Module):
     
@@ -247,7 +245,7 @@ class DistributionalDuelingHead(nn.Module):
             self.advantage_fc1.reset_noise()
             self.advantage_fc2.reset_noise()
 
-
+# the full network is torso MLP -> recurrent core -> dueling head
 class DuelingDRQN(nn.Module):
     
     def __init__(
@@ -315,6 +313,7 @@ class DuelingDRQN(nn.Module):
         else:
             q_values = self.head(rnn_out)
         
+        # mask actions that are illegal with -inf so never selected
         if legal_actions_mask is not None:
             illegal_mask = ~legal_actions_mask
             q_values = q_values.masked_fill(illegal_mask, float("-inf"))
@@ -354,7 +353,6 @@ class DuelingDRQN(nn.Module):
     
     def init_hidden(self, batch_size: int) -> Tuple[torch.Tensor, ...]:
         return self.rnn.init_hidden(batch_size, DEVICE)
-
 
 def create_network(
     obs_dim: int = OBS_DIM,

@@ -47,6 +47,7 @@ class SequenceData:
     n_step_next_obs: Optional[np.ndarray] = None # (train_len, obs_dim)
     n_step_dones: Optional[np.ndarray] = None # (train_len,)
 
+# prioritized sampling
 class SumTree:
     
     def __init__(self, capacity: int):
@@ -108,6 +109,7 @@ class SumTree:
         data_idx = idx - self.capacity + 1
         return idx, self.tree[idx], self.data[data_idx]
 
+# temp buffer during episode(converts to sequences at end)
 class EpisodeBuffer:
     
     def __init__(self, n_step: int = N_STEP, gamma: float = GAMMA):
@@ -170,6 +172,7 @@ class EpisodeBuffer:
         end_idx = min(start_idx + self.n_step, len(self.transitions)) - 1
         return n_step_return, self.transitions[end_idx].next_obs, False
     
+    # overlapping seqs with burn-in for LSTM warmup (similar to R2D2)
     def create_sequences(
         self,
         sequence_length: int = SEQUENCE_LENGTH,
@@ -300,6 +303,7 @@ class EpisodeBuffer:
         self.transitions.clear()
         self.hidden_states.clear()
 
+# uses importance sampling weights and increasing beta
 class PrioritizedSequenceReplayBuffer:
     
     def __init__(

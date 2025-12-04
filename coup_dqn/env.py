@@ -91,7 +91,7 @@ class CoupEnv:
         
         self.turn_count = 0
 
-        # phase can be "main", "challenge_action", "block", "challenge_block"
+        # multi-phase to be made
         self.phase = "main"
         
         self.pending_action = None
@@ -166,6 +166,7 @@ class CoupEnv:
         
         return True
     
+    # handles all 7 main actions with challenge/block
     def _process_main_action(
         self,
         action: int,
@@ -366,6 +367,7 @@ class CoupEnv:
         
         return reward, done, info_bundle
     
+    # honest defender shows card, shuffles back, draws new
     def _reveal_and_replace_card(self, player: int, card: int) -> int:
         self.game.roles[player][card] -= 1
         
@@ -439,6 +441,7 @@ class CoupEnv:
         
         return np.array(obs, dtype=np.float32)
     
+    # computes valid actions based on coins and phase
     def _get_legal_mask(self) -> np.ndarray:
         mask = np.zeros(NUM_ACTIONS, dtype=bool)
         current = self.game.current_player
