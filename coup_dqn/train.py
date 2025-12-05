@@ -307,24 +307,24 @@ def train(
             eps_per_sec = (episode - start_episode + 1) / elapsed
             
             print(f"Episode {episode + 1}/{num_episodes}")
-            print(f"  Win rate: {stats['win_rate']:.2%}")
-            print(f"  Mean reward: {stats['mean_reward']:.3f}")
-            print(f"  Mean length: {stats['mean_length']:.1f}")
-            print(f"  Mean loss: {stats['mean_loss']:.4f}")
-            print(f"  Epsilon: {agent.current_epsilon:.3f}")
-            print(f"  Buffer size: {len(agent.replay_buffer)}")
-            print(f"  Speed: {eps_per_sec:.1f} eps/sec")
+            print(f"\nWin rate: {stats['win_rate']:.2%}")
+            print(f"Mean reward: {stats['mean_reward']:.3f}")
+            print(f"Mean length: {stats['mean_length']:.1f}")
+            print(f"Mean loss: {stats['mean_loss']:.4f}")
+            print(f"Epsilon: {agent.current_epsilon:.3f}")
+            print(f"Buffer size: {len(agent.replay_buffer)}")
+            print(f"Speed: {eps_per_sec:.1f} eps/sec")
         
         if (episode + 1) % EVAL_FREQ == 0:
-            print("\n--- Evaluation ---")
+            print("\n*** Evaluation ***")
             eval_results = evaluate_against_baselines(agent)
             summary = eval_results.get_summary()
             
             for name, stats in summary.items():
-                print(f"  vs {name}:")
-                print(f"    Win rate: {stats['win_rate']:.2%} ({int(stats['games'])} games)")
-                print(f"    Influence margin: {stats['mean_influence_margin']:.2f}")
-                print(f"    Coin margin: {stats['mean_coin_margin']:.2f}")
+                print(f"\nvs {name}:")
+                print(f"\nWin rate: {stats['win_rate']:.2%} ({int(stats['games'])} games)")
+                print(f"Influence margin: {stats['mean_influence_margin']:.2f}")
+                print(f"Coin margin: {stats['mean_coin_margin']:.2f}")
             print()
             
             eval_path = os.path.join(checkpoint_dir, f"eval_{episode + 1}.json")
@@ -340,19 +340,19 @@ def train(
     agent.save(final_path)
     print(f"\nTraining complete. Final checkpoint saved to {final_path}")
     
-    print("\n=== Final Evaluation ===")
+    print("\n****** Final Evaluation ******")
     eval_results = evaluate_against_baselines(agent, num_games=EVAL_GAMES * 2)
     summary = eval_results.get_summary()
     
     for name, stats in summary.items():
-        print(f"vs {name}:")
-        print(f"  Win rate: {stats['win_rate']:.2%}")
-        print(f"  Influence margin: {stats['mean_influence_margin']:.2f}")
-        print(f"  Coin margin: {stats['mean_coin_margin']:.2f}")
+        print(f"\nvs {name}:")
+        print(f"\nWin rate: {stats['win_rate']:.2%}")
+        print(f"Influence margin: {stats['mean_influence_margin']:.2f}")
+        print(f"Coin margin: {stats['mean_coin_margin']:.2f}")
         if stats.get("challenge_success_rate", 0) > 0:
-            print(f"  Challenge success: {stats['challenge_success_rate']:.2%}")
+            print(f"Challenge success: {stats['challenge_success_rate']:.2%}")
         if stats.get("block_success_rate", 0) > 0:
-            print(f"  Block success: {stats['block_success_rate']:.2%}")
+            print(f"Block success: {stats['block_success_rate']:.2%}")
     
     return agent
 
