@@ -22,11 +22,14 @@ from .config import (
     LOG_FREQ,
     SAVE_FREQ,
     CHECKPOINT_DIR,
-    BATCH_SIZE,
-    NUM_MAIN_ACTIONS,
+    SEQUENCE_LENGTH,
+    BURN_IN_LENGTH,
+    N_STEP,
+    GAMMA
 )
 from .agent import DQNAgent, DQNAgentForBaseline
 from .env import CoupEnv, SelfPlayEnv, make_env, make_self_play_env
+from .replay import EpisodeBuffer
 from coup_baseline.baseline import RandomBot, NoLieBot, HeuristicBot, MCTSAgent
 
 class TrainingMetrics:
@@ -130,10 +133,14 @@ class EvaluationResults:
                 "games": games,
                 "mean_influence_margin": np.mean(r["influence_margin"]),
                 "mean_coin_margin": np.mean(r["coin_margin"]),
+                "challenge_attempts": r["challenge_attempts"],
+                "challenge_successes": r["challenge_successes"],
                 "challenge_success_rate": (
                     r["challenge_successes"] / r["challenge_attempts"]
                     if r["challenge_attempts"] > 0 else 0
                 ),
+                "block_attempts": r["block_attempts"],
+                "block_successes": r["block_successes"],
                 "block_success_rate": (
                     r["block_successes"] / r["block_attempts"]
                     if r["block_attempts"] > 0 else 0
@@ -144,7 +151,7 @@ class EvaluationResults:
     def clear(self):
         self.results.clear()
 
-# self-play ep (only player 0 stores transitions)
+# self-play episode
 def run_self_play_episode(
     agent: DQNAgent,
     env: SelfPlayEnv,
@@ -153,12 +160,15 @@ def run_self_play_episode(
     
     hidden_states = [agent.online_net.init_hidden(1), agent.online_net.init_hidden(1)]
     
-    total_reward = 0.0
-    actions_taken = []
+    episode_buffers = [
+        EpisodeBuffer(n_step=N_STEP, gamma=GAMMA),
+        EpisodeBuffer(n_step=N_STEP, gamma=GAMMA),
+    ]
+    
+    total_rewards = [0.0, 0.0]
+    actions_taken = [[], []]
     step = 0
     done = False
-    
-    agent.episode_buffer.clear()
     
     while not done and step < MAX_STEPS_PER_EPISODE:
         obs = env.get_observation_for_player(current_player)
@@ -168,29 +178,49 @@ def run_self_play_episode(
         action, new_hidden = agent.select_action(obs, legal_mask, training=True)
         hidden_states[current_player] = new_hidden
         
-        next_obs, reward, done, next_legal_mask, info, next_player = env.step(action)
+        actor = current_player
         
-        if current_player == 0:
-            agent.store_transition(
-                obs=obs,
-                action=action,
-                reward=reward,
-                next_obs=next_obs,
-                done=done,
-                legal_mask=legal_mask,
-                info=info,
-            )
-            total_reward += reward
-            actions_taken.append(action)
+        _, reward, done, _, info, next_player = env.step(action)
+        
+        # get next observation from the actor's POV (not from the next player)
+        next_obs = env.get_observation_for_player(actor)
+        
+        hidden_for_storage = None
+        if new_hidden is not None:
+            h = new_hidden[0].detach()
+            c = new_hidden[1].detach() if len(new_hidden) > 1 else None
+            hidden_for_storage = (h, c) if c is not None else (h,)
+
+        episode_buffers[actor].add(
+            obs=obs,
+            action=action,
+            reward=reward,
+            next_obs=next_obs,
+            done=done,
+            legal_mask=legal_mask,
+            info=info,
+            hidden_state=hidden_for_storage,
+        )
+        total_rewards[actor] += reward
+        actions_taken[actor].append(action)
         
         current_player = next_player if not done else current_player
         step += 1
     
-    agent.end_episode()
+    # add to replay
+    for buffer in episode_buffers:
+        sequences = buffer.create_sequences(
+            sequence_length=SEQUENCE_LENGTH,
+            burn_in_length=BURN_IN_LENGTH,
+        )
+        for seq in sequences:
+            agent.replay_buffer.add(seq)
+    
+    agent.reset_hidden_state()
     
     won = env.env.get_winner() == 0
     
-    return total_reward, step, won, actions_taken
+    return total_rewards[0], step, won, actions_taken[0]
 
 # eval game vs. baseline opponent
 def run_evaluation_game(
@@ -198,34 +228,70 @@ def run_evaluation_game(
     env: CoupEnv,
     opponent,
     agent_player: int = 0,
-) -> Tuple[bool, int, int, List[int]]:
+) -> Tuple[bool, int, int, List[int], List[bool], List[bool]]:
     obs, legal_mask = env.reset(agent_player=agent_player)
     
     agent.reset_hidden_state()
     actions_taken = []
+    challenge_outcomes = []
+    block_outcomes = []
     step = 0
     done = False
     
+    # block-in-action by agent
+    agent_has_pending_block = False
+    
     while not done and step < MAX_STEPS_PER_EPISODE:
         current_player = env.game.current_player
+        phase = env.phase
         
         if current_player == agent_player:
             obs = env._get_observation()
             legal_mask = env._get_legal_mask()
             action = agent.get_policy_action(obs, legal_mask)
             actions_taken.append(action)
+            
+            # making a challenge or block decision
+            agent_is_challenging = (phase in ["challenge_action", "challenge_block"] and action == 12)
+            agent_is_blocking = (phase == "block" and action >= 7 and action <= 10)
         else:
-            action = opponent.select_action(env.game, current_player)
+            # baseline opponent uses select_action for main, random for challenge/block
+            if phase == "main":
+                action = opponent.select_action(env.game, current_player)
+            else:
+                # random decision for challenge/block phases
+                legal_mask = env._get_legal_mask()
+                legal_actions = np.where(legal_mask)[0]
+                action = np.random.choice(legal_actions)
+            agent_is_challenging = False
+            agent_is_blocking = False
         
         next_obs, reward, done, next_legal_mask, info = env.step(action)
+        
+        if agent_is_challenging and "challenge_info" in info and info["challenge_info"]:
+            challenge_success = info["challenge_info"].get("challenge_success", False)
+            challenge_outcomes.append(challenge_success)
+        
+        if agent_is_blocking:
+            agent_has_pending_block = True
+        
+        if agent_has_pending_block and "block_info" in info and info["block_info"]:
+            if "block_success" in info["block_info"]:
+                block_success = info["block_info"]["block_success"]
+                block_outcomes.append(block_success)
+                agent_has_pending_block = False
+        
         step += 1
+    
+    if agent_has_pending_block:
+        block_outcomes.append(True)
     
     opponent_player = (agent_player + 1) % 2
     influence_margin = env.game.influence[agent_player] - env.game.influence[opponent_player]
     coin_margin = env.game.players[agent_player] - env.game.players[opponent_player]
     won = env.get_winner() == agent_player
     
-    return won, influence_margin, coin_margin, actions_taken
+    return won, influence_margin, coin_margin, actions_taken, challenge_outcomes, block_outcomes
 
 def evaluate_against_baselines(
     agent: DQNAgent,
@@ -248,7 +314,7 @@ def evaluate_against_baselines(
         for game_idx in range(games_for_this):
             agent_player = game_idx % 2
             
-            won, inf_margin, coin_margin, actions = run_evaluation_game(
+            won, inf_margin, coin_margin, actions, challenge_outcomes, block_outcomes = run_evaluation_game(
                 agent, env, opponent, agent_player
             )
             
@@ -259,10 +325,21 @@ def evaluate_against_baselines(
                 coin_margin=coin_margin,
                 actions=actions,
             )
+            
+            r = results.results[name]
+            for challenge_success in challenge_outcomes:
+                r["challenge_attempts"] += 1
+                if challenge_success:
+                    r["challenge_successes"] += 1
+            
+            for block_success in block_outcomes:
+                r["block_attempts"] += 1
+                if block_success:
+                    r["block_successes"] += 1
     
     return results
 
-# main loop: collect eps, train after warmup, log/eval/save
+# main loop (collect eps, train after warmup, log/eval/save)
 def train(
     num_episodes: int = NUM_EPISODES,
     checkpoint_dir: str = CHECKPOINT_DIR,
@@ -289,17 +366,21 @@ def train(
     metrics = TrainingMetrics()
     
     total_steps = 0
+    steps_since_train = 0
     start_time = time.time()
     
     for episode in range(start_episode, num_episodes):
         reward, length, won, actions = run_self_play_episode(agent, env)
         metrics.add_episode(reward, length, won, actions)
         total_steps += length
+        steps_since_train += length
         
-        if total_steps > WARMUP_STEPS and total_steps % TRAIN_FREQ == 0:
+        # train for each TRAIN_FREQ steps accumulated
+        while total_steps > WARMUP_STEPS and steps_since_train >= TRAIN_FREQ:
             train_result = agent.train_step()
             if train_result:
                 metrics.add_training_step(train_result["loss"], train_result["td_error"])
+            steps_since_train -= TRAIN_FREQ
         
         if (episode + 1) % LOG_FREQ == 0:
             stats = metrics.get_recent_stats()
@@ -325,6 +406,8 @@ def train(
                 print(f"\nWin rate: {stats['win_rate']:.2%} ({int(stats['games'])} games)")
                 print(f"Influence margin: {stats['mean_influence_margin']:.2f}")
                 print(f"Coin margin: {stats['mean_coin_margin']:.2f}")
+                print(f"Challenges: {stats['challenge_successes']}/{stats['challenge_attempts']} ({stats['challenge_success_rate']:.0%})")
+                print(f"Blocks: {stats['block_successes']}/{stats['block_attempts']} ({stats['block_success_rate']:.0%})")
             print()
             
             eval_path = os.path.join(checkpoint_dir, f"eval_{episode + 1}.json")
@@ -349,10 +432,8 @@ def train(
         print(f"\nWin rate: {stats['win_rate']:.2%}")
         print(f"Influence margin: {stats['mean_influence_margin']:.2f}")
         print(f"Coin margin: {stats['mean_coin_margin']:.2f}")
-        if stats.get("challenge_success_rate", 0) > 0:
-            print(f"Challenge success: {stats['challenge_success_rate']:.2%}")
-        if stats.get("block_success_rate", 0) > 0:
-            print(f"Block success: {stats['block_success_rate']:.2%}")
+        print(f"Challenges: {stats['challenge_successes']}/{stats['challenge_attempts']} ({stats['challenge_success_rate']:.0%})")
+        print(f"Blocks: {stats['block_successes']}/{stats['block_attempts']} ({stats['block_success_rate']:.0%})")
     
     return agent
 

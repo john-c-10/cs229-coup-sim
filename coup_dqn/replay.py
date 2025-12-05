@@ -7,7 +7,6 @@ import torch
 from .config import (
     SEQUENCE_LENGTH,
     BURN_IN_LENGTH,
-    TRAIN_LENGTH,
     USE_PRIORITIZED_REPLAY,
     PER_ALPHA,
     PER_BETA_START,
@@ -20,7 +19,7 @@ from .config import (
     CLIP_REWARDS,
     REWARD_CLIP_MIN,
     REWARD_CLIP_MAX,
-    DEVICE,
+    DEVICE
 )
 
 @dataclass
@@ -81,6 +80,8 @@ class SumTree:
     
     @property
     def max_priority(self) -> float:
+        if self.num_entries == 0:
+            return 1.0  # default priority for empty
         return max(self.tree[self.capacity - 1:self.capacity - 1 + self.num_entries])
     
     @property
@@ -142,8 +143,10 @@ class EpisodeBuffer:
         
         if hidden_state is not None:
             h = hidden_state[0].cpu().numpy() if isinstance(hidden_state[0], torch.Tensor) else hidden_state[0]
-            if len(hidden_state) > 1:
+            h = np.squeeze(h, axis=1)
+            if len(hidden_state) > 1 and hidden_state[1] is not None:
                 c = hidden_state[1].cpu().numpy() if isinstance(hidden_state[1], torch.Tensor) else hidden_state[1]
+                c = np.squeeze(c, axis=1)
                 self.hidden_states.append((h, c))
             else:
                 self.hidden_states.append((h, None))
@@ -332,6 +335,9 @@ class PrioritizedSequenceReplayBuffer:
     def add(self, sequence: SequenceData, priority: Optional[float] = None):
         if priority is None:
             priority = self.max_priority
+
+        if not np.isfinite(priority) or priority < 0:
+            priority = self.max_priority
         
         priority = (priority + PER_EPSILON) ** self.alpha
         self.tree.add(priority, sequence)
@@ -344,7 +350,25 @@ class PrioritizedSequenceReplayBuffer:
         indices = []
         priorities = []
         
-        segment = self.tree.total / batch_size
+        total = self.tree.total
+        
+        if total <= 0 or not np.isfinite(total):
+            valid_indices = [i for i in range(self.tree.num_entries) if self.tree.data[i] is not None]
+            if len(valid_indices) < batch_size:
+                raise ValueError(f"Not enough valid entries in buffer: {len(valid_indices)} < {batch_size}")
+            
+            sampled_indices = np.random.choice(valid_indices, batch_size, replace=False)
+            for data_idx in sampled_indices:
+                idx = data_idx + self.tree.capacity - 1
+                sequences.append(self.tree.data[data_idx])
+                indices.append(idx)
+                priorities.append(1.0)  # uniform priority
+            
+            self.frame_count += batch_size
+            weights = np.ones(batch_size, dtype=np.float32)
+            return sequences, np.array(indices), weights
+        
+        segment = total / batch_size
         
         for i in range(batch_size):
             a = segment * i
@@ -361,9 +385,9 @@ class PrioritizedSequenceReplayBuffer:
             min_priority = PER_EPSILON
         
         priorities = np.array(priorities)
-        max_weight = (min_priority / self.tree.total * self.tree.num_entries) ** (-self.beta)
+        max_weight = (min_priority / total * self.tree.num_entries) ** (-self.beta)
         
-        weights = (priorities / self.tree.total * self.tree.num_entries) ** (-self.beta)
+        weights = (priorities / total * self.tree.num_entries) ** (-self.beta)
         weights = weights / max_weight
         
         self.frame_count += batch_size
@@ -372,6 +396,8 @@ class PrioritizedSequenceReplayBuffer:
     
     def update_priorities(self, indices: np.ndarray, priorities: np.ndarray):
         for idx, priority in zip(indices, priorities):
+            if not np.isfinite(priority):
+                priority = self.max_priority
             priority = (abs(priority) + PER_EPSILON) ** self.alpha
             self.tree.update(idx, priority)
             self.max_priority = max(self.max_priority, priority)
@@ -464,22 +490,35 @@ def collate_sequences(
         ),
     }
     
-    if sequences[0].init_hidden_h is not None:
+    all_have_hidden_h = all(s.init_hidden_h is not None for s in sequences)
+    
+    if all_have_hidden_h:
         h_list = [s.init_hidden_h for s in sequences]
-        batch["init_hidden_h"] = torch.tensor(
-            np.stack(h_list, axis=1),
-            dtype=torch.float32,
-            device=DEVICE,
-        )
-        
-        if sequences[0].init_hidden_c is not None:
-            c_list = [s.init_hidden_c for s in sequences]
-            batch["init_hidden_c"] = torch.tensor(
-                np.stack(c_list, axis=1),
+        first_shape = h_list[0].shape
+        if all(h.shape == first_shape for h in h_list):
+            batch["init_hidden_h"] = torch.tensor(
+                np.stack(h_list, axis=1),
                 dtype=torch.float32,
                 device=DEVICE,
             )
+            
+            all_have_hidden_c = all(s.init_hidden_c is not None for s in sequences)
+            if all_have_hidden_c:
+                c_list = [s.init_hidden_c for s in sequences]
+                first_c_shape = c_list[0].shape
+                if all(c.shape == first_c_shape for c in c_list):
+                    batch["init_hidden_c"] = torch.tensor(
+                        np.stack(c_list, axis=1),
+                        dtype=torch.float32,
+                        device=DEVICE,
+                    )
+                else:
+                    batch["init_hidden_c"] = None
+            else:
+                batch["init_hidden_c"] = None
         else:
+            # shapes don't match so use fresh hidden state
+            batch["init_hidden_h"] = None
             batch["init_hidden_c"] = None
     else:
         batch["init_hidden_h"] = None
