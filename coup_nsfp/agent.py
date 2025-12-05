@@ -52,7 +52,7 @@ class NFSPAgent:
         return torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
 
 
-    def select_action(self, state: np.ndarray, training: bool = True):
+    def select_action(self, state: np.ndarray, training: bool = True, valid_actions=None):
         self.total_steps += 1
 
         #goes from .1 to .02 over time
@@ -68,33 +68,54 @@ class NFSPAgent:
             mode = "AS"
 
         if mode == "BR":
-            action = self._select_br_action(state, training)
+            action = self._select_br_action(state, training, valid_actions)
         else:
-            action = self._select_as_action(state, training)
+            action = self._select_as_action(state, training, valid_actions)
 
         return action, mode
 
-    def _select_br_action(self, state: np.ndarray, training: bool = True) -> int:
+    def _select_br_action(self, state: np.ndarray, training: bool = True, valid_actions=None) -> int:
         #this is random vs greedy factor
         self.br_explore_epsilon = max(
             EPSILON_EXPLORE_END,
             self.br_explore_epsilon - EPSILON_EXPLORE_DECAY
         )
 
+        # If no valid_actions provided, all actions are valid
+        if valid_actions is None:
+            valid_actions = list(range(NUM_ACTIONS))
+
         if training and random.random() < self.br_explore_epsilon:
-            return random.randrange(NUM_ACTIONS)
+            return random.choice(valid_actions)
 
         with torch.no_grad():
             s = self._to_tensor(state)
-            q_values = self.br_policy(s)
-            #q_values shape is (1, num_actions)
-            return int(q_values.argmax(dim=1).item())
+            q_values = self.br_policy(s)[0]  # shape (num_actions,)
+            
+            # Mask out invalid actions by setting their Q-values to -inf
+            masked_q = q_values.clone()
+            invalid_mask = torch.ones(NUM_ACTIONS, dtype=torch.bool, device=DEVICE)
+            invalid_mask[valid_actions] = False
+            masked_q[invalid_mask] = float('-inf')
+            
+            return int(masked_q.argmax().item())
 
-    def _select_as_action(self, state: np.ndarray, training: bool = True) -> int:
+    def _select_as_action(self, state: np.ndarray, training: bool = True, valid_actions=None) -> int:
+        # If no valid_actions provided, all actions are valid
+        if valid_actions is None:
+            valid_actions = list(range(NUM_ACTIONS))
+            
         with torch.no_grad():
             s = self._to_tensor(state)
-            logits = self.as_policy(s)
-            probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            logits = self.as_policy(s)[0]  # shape (num_actions,)
+            
+            # Mask out invalid actions by setting their logits to -inf before softmax
+            masked_logits = logits.clone()
+            invalid_mask = torch.ones(NUM_ACTIONS, dtype=torch.bool, device=DEVICE)
+            invalid_mask[valid_actions] = False
+            masked_logits[invalid_mask] = float('-inf')
+            
+            probs = torch.softmax(masked_logits, dim=0).cpu().numpy()
 
         if training:
             return int(np.random.choice(NUM_ACTIONS, p=probs))

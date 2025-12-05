@@ -71,16 +71,16 @@ def calculate_reward(game, player, pre_coins, pre_opp_coins, pre_inf, pre_opp_in
     if game.is_game_over():
         winner = game.get_winner()
         if winner == player:
-            reward += 10.0
+            reward += 1.0
         else:
-            reward -= 10.0
+            reward -= 1.0
     
     return reward
 
 
-def self_play_training(num_episodes: int = 10_000, save_prefix: str = "nfsp_coup"):
+def self_play_training(num_episodes=10_000, save_prefix="nfsp_coup"):
     action_to_move = {
-        0: 4,
+        0: 4,   
         1: 5,
         2: 0,
         3: 3,
@@ -88,6 +88,9 @@ def self_play_training(num_episodes: int = 10_000, save_prefix: str = "nfsp_coup
         5: 1,
         6: 6,
     }
+    
+    # Inverse mapping: game move -> agent action
+    move_to_action = {v: k for k, v in action_to_move.items()}
     
     dummy_game = CoupGame()
     p0_hist = np.zeros(NUM_CARD_TYPES, dtype=np.int32)
@@ -136,7 +139,11 @@ def self_play_training(num_episodes: int = 10_000, save_prefix: str = "nfsp_coup
             current_player = game.current_player
             agent = agent1 if current_player == 0 else agent2
             
-            action, mode_used = agent.select_action(state, training=True)
+            # Get valid moves from game and convert to agent action space
+            valid_game_moves = game.get_valid_moves(current_player)
+            valid_actions = [move_to_action[move] for move in valid_game_moves]
+            
+            action, mode_used = agent.select_action(state, training=True, valid_actions=valid_actions)
             
             game_state_pre = game.get_state()
             pre_coins = game_state_pre['players_coins'][current_player]
@@ -183,4 +190,4 @@ def self_play_training(num_episodes: int = 10_000, save_prefix: str = "nfsp_coup
 
 if __name__ == "__main__":
     # Adjust num_episodes as needed
-    self_play_training(num_episodes=10000, save_prefix="nfsp_coup_demo")
+    self_play_training(num_episodes=50000, save_prefix="nfsp_coup_demo")
