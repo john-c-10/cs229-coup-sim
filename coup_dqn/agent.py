@@ -34,8 +34,7 @@ from .config import (
     V_MAX,
     BURN_IN_LENGTH,
     TRAIN_LENGTH,
-    SEQUENCE_LENGTH,
-    CHECKPOINT_DIR,
+    SEQUENCE_LENGTH
 )
 from .networks import DuelingDRQN, create_network
 from .replay import (
@@ -200,6 +199,7 @@ class DQNAgent:
         self.optimizer.step()
         
         td_errors_np = td_errors.detach().cpu().numpy()
+        td_errors_np = np.nan_to_num(td_errors_np, nan=0.0, posinf=1.0, neginf=-1.0)
         self.replay_buffer.update_priorities(indices, np.abs(td_errors_np).mean(axis=-1))
         
         self.training_steps += 1
@@ -290,8 +290,7 @@ class DQNAgent:
         else:
             hidden = self.online_net.init_hidden(batch_size)
         
-        last_obs = observations[:, -1, :]
-        current_dist, _ = self.online_net.get_q_distribution(last_obs, hidden)
+        current_dist, _ = self.online_net.get_q_distribution(observations, hidden)
         
         last_action = actions[:, -1]
         current_dist_a = current_dist.gather(
@@ -400,6 +399,12 @@ class DQNAgent:
 # adapter for baseline eval harness
 class DQNAgentForBaseline:
     
+    BLOCK_TYPE_TO_MAIN_ACTION = {
+        0: 1, # foreign aid block
+        1: 5, # assassinate block
+        2: 3, # steal block
+    }
+    
     def __init__(self, agent: DQNAgent, env):
         self.agent = agent
         self.env = env
@@ -425,7 +430,7 @@ class DQNAgentForBaseline:
         self.env.game = game
         self.env.game.current_player = player
         self.env.phase = "block"
-        self.env.pending_action = block_type
+        self.env.pending_action = self.BLOCK_TYPE_TO_MAIN_ACTION.get(block_type, block_type)
         
         obs = self.env._get_observation()
         legal_mask = self.env._get_legal_mask()

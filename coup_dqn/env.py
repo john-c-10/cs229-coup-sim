@@ -1,6 +1,5 @@
 import numpy as np
 import random
-import copy
 from typing import Dict, Any, Tuple, Optional, List
 from dataclasses import dataclass, field
 
@@ -10,18 +9,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from game import CoupGame
 from .config import (
-    NUM_CARD_TYPES,
     NUM_MAIN_ACTIONS,
-    NUM_BLOCK_ACTIONS,
-    NUM_CHALLENGE_ACTIONS,
     NUM_ACTIONS,
-    ALL_ACTIONS,
     ACTIONS,
-    BLOCK_ACTIONS,
-    CHALLENGE_ACTIONS,
     HISTORY_LENGTH,
     ACTION_ENCODING_DIM,
-    OBS_DIM,
     MAX_STEPS_PER_EPISODE,
     USE_TIME_PENALTY,
     TIME_PENALTY,
@@ -79,6 +71,25 @@ class InfoBundle:
             "steal_transfer_amount": self.steal_transfer_amount,
         }
 
+# maps main action to claimed card (None if no claim)
+ACTION_TO_CLAIM = {
+    "INCOME": None,
+    "FOREIGN_AID": None,
+    "TAX": 0, # Duke
+    "STEAL": 3, # Captain
+    "EXCHANGE": 2, # Ambassador
+    "ASSASSINATE": 1, # Assassin
+    "COUP": None,
+}
+
+# maps block action to claimed card
+BLOCK_TO_CLAIM = {
+    7: 0, # BLOCK_FOREIGN_AID means claiming Duke
+    8: 4, # BLOCK_ASSASSINATION means claiming Contessa
+    9: 3, # BLOCK_STEAL_CAPTAIN means claiming Captain
+    10: 2, # BLOCK_STEAL_AMBASSADOR means claiming Ambassador
+}
+
 class CoupEnv:
     
     def __init__(self, opponent_agent=None):
@@ -91,12 +102,17 @@ class CoupEnv:
         
         self.turn_count = 0
 
-        # multi-phase to be made
         self.phase = "main"
         
-        self.pending_action = None
-        self.pending_claim = None
-        self.pending_block = None
+        self.pending_action = None # main action index (0-6)
+        self.pending_action_name = None # action name string
+        self.pending_actor = None # who did the main action
+        self.pending_target = None # target of the action
+        self.pending_claim = None # card claimed by main action
+        self.pending_block = None # block action index (7-10) if blocked
+        self.pending_block_claim = None # card claimed by blocker
+        
+        self.current_info_bundle = None
         
     def reset(self, agent_player: int = 0) -> Tuple[np.ndarray, np.ndarray]:
         self.game = CoupGame()
@@ -104,45 +120,70 @@ class CoupEnv:
         self.action_history = []
         self.turn_count = 0
         self.phase = "main"
-        self.pending_action = None
-        self.pending_claim = None
-        self.pending_block = None
+        self._clear_pending()
         
         obs = self._get_observation()
         legal_mask = self._get_legal_mask()
         
         return obs, legal_mask
     
+    def _clear_pending(self):
+        self.pending_action = None
+        self.pending_action_name = None
+        self.pending_actor = None
+        self.pending_target = None
+        self.pending_claim = None
+        self.pending_block = None
+        self.pending_block_claim = None
+        self.current_info_bundle = None
+    
     def step(
         self,
         action: int,
     ) -> Tuple[np.ndarray, float, bool, np.ndarray, Dict[str, Any]]:
-        info_bundle = InfoBundle(
-            influence_before=self.game.influence.copy(),
-            coins_before=self.game.players.copy(),
-            actor=self.game.current_player,
-        )
+        acting_player = self.game.current_player
+        step_inf_before = self.game.influence.copy()
+        step_coins_before = self.game.players.copy()
         
-        current_player = self.game.current_player
-        opponent = (current_player + 1) % 2
+        # create or reuse info bundle (tracks turn-level info)
+        if self.current_info_bundle is None:
+            self.current_info_bundle = InfoBundle(
+                influence_before=step_inf_before,
+                coins_before=step_coins_before,
+                actor=acting_player,
+            )
+        
+        info_bundle = self.current_info_bundle
         
         if self.phase == "main":
-            reward, done, info_bundle = self._process_main_action(action, info_bundle)
+            _, done, info_bundle = self._process_main_action(action, info_bundle)
         elif self.phase == "challenge_action":
-            reward, done, info_bundle = self._process_challenge_decision(action, info_bundle)
+            _, done, info_bundle = self._process_challenge_decision(action, info_bundle)
         elif self.phase == "block":
-            reward, done, info_bundle = self._process_block_decision(action, info_bundle)
+            _, done, info_bundle = self._process_block_decision(action, info_bundle)
         elif self.phase == "challenge_block":
-            reward, done, info_bundle = self._process_block_challenge_decision(action, info_bundle)
+            _, done, info_bundle = self._process_block_challenge_decision(action, info_bundle)
         else:
             raise ValueError(f"Unknown phase: {self.phase}")
         
-        info_bundle.influence_after = self.game.influence.copy()
-        info_bundle.coins_after = self.game.players.copy()
+        # capture state after this step
+        step_inf_after = self.game.influence.copy()
+        step_coins_after = self.game.players.copy()
+        
+        info_bundle.influence_after = step_inf_after
+        info_bundle.coins_after = step_coins_after
         info_bundle.done = done
         
+        winner = None
         if done:
-            info_bundle.winner = self.game.get_winner()
+            winner = self.game.get_winner()
+            info_bundle.winner = winner
+        
+        reward = self._compute_reward(
+            acting_player=acting_player,
+            done=done,
+            winner=winner,
+        )
         
         if USE_TIME_PENALTY and self.turn_count > STALL_THRESHOLD:
             reward += TIME_PENALTY
@@ -166,7 +207,25 @@ class CoupEnv:
         
         return True
     
-    # handles all 7 main actions with challenge/block
+    def _compute_reward(
+        self,
+        acting_player: int,
+        done: bool,
+        winner: Optional[int],
+    ) -> float:
+        if done:
+            if winner == acting_player:
+                return 1.0
+            elif winner is not None:
+                return -1.0
+            else:
+                # draw
+                return 0.0
+        
+        # all intermediate steps get zero reward
+        return 0.0
+    
+    # handles main action, may transition to challenge/block phases
     def _process_main_action(
         self,
         action: int,
@@ -180,6 +239,7 @@ class CoupEnv:
         action_name = ACTIONS[action]
         
         info_bundle.action_type = action_name
+        info_bundle.actor = current_player
         info_bundle.target = opponent if action_name in ["STEAL", "ASSASSINATE", "COUP"] else None
         
         if not self._is_action_valid(current_player, action_name):
@@ -197,175 +257,271 @@ class CoupEnv:
         
         self._add_to_history(action, current_player, opponent)
         
+        # store pending action info
+        self.pending_action = action
+        self.pending_action_name = action_name
+        self.pending_actor = current_player
+        self.pending_target = opponent
+        self.pending_claim = ACTION_TO_CLAIM.get(action_name)
+        
         reward = 0.0
         done = False
         
+        # actions that execute immediately (no challenge/block possible)
         if action_name == "INCOME":
             self.game.players[current_player] += 1
             info_bundle.result = "succeeded"
             self._advance_turn()
+            done = self.game.is_game_over()
+            return reward, done, info_bundle
             
-        elif action_name == "FOREIGN_AID":
-            blocked = self._check_opponent_block(opponent, block_type=0)
-            if blocked:
-                info_bundle.result = "blocked"
-                info_bundle.block_info = {"blocker": opponent, "block_type": "Duke", "block_success": True}
-            else:
-                self.game.players[current_player] += 2
-                info_bundle.result = "succeeded"
-            self._advance_turn()
-            
-        elif action_name == "TAX":
-            challenged = self._check_opponent_challenge(opponent, claimed_card=0)
-            if challenged:
-                has_card = self.game.roles[current_player][0] > 0
-                if has_card:
-                    self.game.remove_influence(opponent)
-                    new_card = self._reveal_and_replace_card(current_player, 0)
-                    self.game.players[current_player] += 3
-                    info_bundle.result = "succeeded"
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "claim_challenged": "Duke",
-                        "challenge_success": False,
-                        "who_lost_influence": opponent,
-                        "revealed_card": 0,
-                    }
-                else:
-                    self.game.remove_influence(current_player)
-                    info_bundle.result = "challenged"
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "claim_challenged": "Duke",
-                        "challenge_success": True,
-                        "who_lost_influence": current_player,
-                    }
-            else:
-                self.game.players[current_player] += 3
-                info_bundle.result = "succeeded"
-            self._advance_turn()
-            
-        elif action_name == "STEAL":
-            challenged = self._check_opponent_challenge(opponent, claimed_card=3)
-            if challenged:
-                has_card = self.game.roles[current_player][3] > 0
-                if has_card:
-                    self.game.remove_influence(opponent)
-                    new_card = self._reveal_and_replace_card(current_player, 3)
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "challenge_success": False,
-                        "who_lost_influence": opponent,
-                        "revealed_card": 3,
-                    }
-                    blocked = self._check_opponent_block(opponent, block_type=2)
-                    if blocked:
-                        info_bundle.result = "blocked"
-                        info_bundle.block_info = {"blocker": opponent, "block_success": True}
-                    else:
-                        steal_amt = min(2, self.game.players[opponent])
-                        self.game.players[current_player] += steal_amt
-                        self.game.players[opponent] -= steal_amt
-                        info_bundle.steal_transfer_amount = steal_amt
-                        info_bundle.result = "succeeded"
-                else:
-                    self.game.remove_influence(current_player)
-                    info_bundle.result = "challenged"
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "challenge_success": True,
-                        "who_lost_influence": current_player,
-                    }
-            else:
-                blocked = self._check_opponent_block(opponent, block_type=2)
-                if blocked:
-                    info_bundle.result = "blocked"
-                    info_bundle.block_info = {"blocker": opponent, "block_success": True}
-                else:
-                    steal_amt = min(2, self.game.players[opponent])
-                    self.game.players[current_player] += steal_amt
-                    self.game.players[opponent] -= steal_amt
-                    info_bundle.steal_transfer_amount = steal_amt
-                    info_bundle.result = "succeeded"
-            self._advance_turn()
-            
-        elif action_name == "EXCHANGE":
-            challenged = self._check_opponent_challenge(opponent, claimed_card=2)
-            if challenged:
-                has_card = self.game.roles[current_player][2] > 0
-                if has_card:
-                    self.game.remove_influence(opponent)
-                    new_card = self._reveal_and_replace_card(current_player, 2)
-                    self.game.pick_cards(current_player)
-                    info_bundle.result = "succeeded"
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "challenge_success": False,
-                        "who_lost_influence": opponent,
-                        "revealed_card": 2,
-                    }
-                else:
-                    self.game.remove_influence(current_player)
-                    info_bundle.result = "challenged"
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "challenge_success": True,
-                        "who_lost_influence": current_player,
-                    }
-            else:
-                self.game.pick_cards(current_player)
-                info_bundle.result = "succeeded"
-            self._advance_turn()
-            
-        elif action_name == "ASSASSINATE":
-            self.game.players[current_player] -= 3
-            challenged = self._check_opponent_challenge(opponent, claimed_card=1)
-            if challenged:
-                has_card = self.game.roles[current_player][1] > 0
-                if has_card:
-                    self.game.remove_influence(opponent)
-                    new_card = self._reveal_and_replace_card(current_player, 1)
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "challenge_success": False,
-                        "who_lost_influence": opponent,
-                        "revealed_card": 1,
-                    }
-                    blocked = self._check_opponent_block(opponent, block_type=1)
-                    if blocked and self.game.influence[opponent] > 0:
-                        info_bundle.result = "blocked"
-                        info_bundle.block_info = {"blocker": opponent, "block_success": True}
-                    else:
-                        if self.game.influence[opponent] > 0:
-                            self.game.remove_influence(opponent)
-                        info_bundle.result = "succeeded"
-                else:
-                    self.game.remove_influence(current_player)
-                    info_bundle.result = "challenged"
-                    info_bundle.challenge_info = {
-                        "challenger": opponent,
-                        "challenge_success": True,
-                        "who_lost_influence": current_player,
-                    }
-            else:
-                blocked = self._check_opponent_block(opponent, block_type=1)
-                if blocked:
-                    info_bundle.result = "blocked"
-                    info_bundle.block_info = {"blocker": opponent, "block_success": True}
-                else:
-                    self.game.remove_influence(opponent)
-                    info_bundle.result = "succeeded"
-            self._advance_turn()
-            
-        elif action_name == "COUP":
+        if action_name == "COUP":
             self.game.players[current_player] -= 7
             self.game.remove_influence(opponent)
             info_bundle.result = "succeeded"
             self._advance_turn()
+            done = self.game.is_game_over()
+            return reward, done, info_bundle
+        
+        # foreign aid which can be blocked but not challenged
+        if action_name == "FOREIGN_AID":
+            if self.game.influence[opponent] > 0:
+                self.phase = "block"
+                self.game.current_player = opponent  # opponent decides
+            else:
+                # opponent eliminated, action succeeds
+                self.game.players[current_player] += 2
+                info_bundle.result = "succeeded"
+                self._advance_turn()
+            done = self.game.is_game_over()
+            return reward, done, info_bundle
+        
+        # tax, steal, exchange, assassinate which can be challenged
+        if action_name == "ASSASSINATE":
+            self.game.players[current_player] -= 3  # pay cost upfront
+        
+        if self.game.influence[opponent] > 0:
+            self.phase = "challenge_action"
+            self.game.current_player = opponent  # opponent decides
+        else:
+            # opponent eliminated, execute action
+            self._execute_pending_action(info_bundle)
+            self._advance_turn()
         
         done = self.game.is_game_over()
-        
         return reward, done, info_bundle
+    
+    def _process_challenge_decision(
+        self,
+        action: int,
+        info_bundle: InfoBundle,
+    ) -> Tuple[float, bool, InfoBundle]:
+        reward = 0.0
+        done = False
+        
+        challenger = self.game.current_player
+        actor = self.pending_actor
+        claimed_card = self.pending_claim
+        
+        # action 12 = challenge, action 13 = accept
+        is_challenge = (action == 12)
+        
+        self._add_to_history(action, challenger, actor)
+        
+        if is_challenge:
+            has_card = self.game.roles[actor][claimed_card] > 0
+            
+            if has_card:
+                # challenge failed so challenger loses influence
+                self.game.remove_influence(challenger)
+                new_card = self._reveal_and_replace_card(actor, claimed_card)
+                
+                info_bundle.challenge_info = {
+                    "challenger": challenger,
+                    "claim_challenged": claimed_card,
+                    "challenge_success": False,
+                    "who_lost_influence": challenger,
+                    "revealed_card": claimed_card,
+                }
+                
+                # check if game over from losing influence
+                if self.game.is_game_over():
+                    info_bundle.result = "succeeded"
+                    self._advance_turn()
+                    return reward, True, info_bundle
+                
+                # action can proceed socheck if blockable
+                if self._is_action_blockable() and self.game.influence[challenger] > 0:
+                    self.phase = "block"
+                    self.game.current_player = self.pending_target  # target decides
+                else:
+                    # not blockable or target eliminated so carry out action
+                    self._execute_pending_action(info_bundle)
+                    self._advance_turn()
+            else:
+                # challenge succeeded so actor was lying
+                self.game.remove_influence(actor)
+                info_bundle.result = "challenged"
+                info_bundle.challenge_info = {
+                    "challenger": challenger,
+                    "claim_challenged": claimed_card,
+                    "challenge_success": True,
+                    "who_lost_influence": actor,
+                }
+                self._advance_turn()
+        else:
+            # accepted (no challenge) so check if blockable
+            if self._is_action_blockable() and self.game.influence[self.pending_target] > 0:
+                self.phase = "block"
+                self.game.current_player = self.pending_target  # target decides
+            else:
+                # not blockable so carry out action
+                self._execute_pending_action(info_bundle)
+                self._advance_turn()
+        
+        done = self.game.is_game_over()
+        return reward, done, info_bundle
+    
+    def _process_block_decision(
+        self,
+        action: int,
+        info_bundle: InfoBundle,
+    ) -> Tuple[float, bool, InfoBundle]:
+        reward = 0.0
+        done = False
+        
+        blocker = self.game.current_player
+        actor = self.pending_actor
+        
+        # action 11 = DECLINE_BLOCK, 7-10 = block variants
+        is_block = (action >= 7 and action <= 10)
+        
+        self._add_to_history(action, blocker, actor)
+        
+        if is_block:
+            self.pending_block = action
+            self.pending_block_claim = BLOCK_TO_CLAIM.get(action)
+            
+            info_bundle.block_info = {
+                "blocker": blocker,
+                "block_action": action,
+                "block_claim": self.pending_block_claim,
+            }
+            
+            # actor can challenge the block
+            if self.game.influence[actor] > 0:
+                self.phase = "challenge_block"
+                self.game.current_player = actor  # actor decides
+            else:
+                # actor eliminated which meansblock succeeds automatically
+                info_bundle.result = "blocked"
+                info_bundle.block_info["block_success"] = True
+                self._advance_turn()
+        else:
+            # declined to block which means execute action
+            self._execute_pending_action(info_bundle)
+            self._advance_turn()
+        
+        done = self.game.is_game_over()
+        return reward, done, info_bundle
+    
+    def _process_block_challenge_decision(
+        self,
+        action: int,
+        info_bundle: InfoBundle,
+    ) -> Tuple[float, bool, InfoBundle]:
+        reward = 0.0
+        done = False
+        
+        challenger = self.game.current_player  # original actor
+        blocker = self.pending_target
+        block_claim = self.pending_block_claim
+        
+        # action 12 = challenge, action 13 = accept
+        is_challenge = (action == 12)
+        
+        self._add_to_history(action, challenger, blocker)
+        
+        if is_challenge:
+            has_card = self.game.roles[blocker][block_claim] > 0
+            
+            if has_card:
+                # challenge failed which means challenger (actor) loses influence
+                self.game.remove_influence(challenger)
+                new_card = self._reveal_and_replace_card(blocker, block_claim)
+                
+                info_bundle.block_info["block_success"] = True
+                info_bundle.block_info["block_challenge_outcome"] = "blocker_wins"
+                info_bundle.result = "blocked"
+                info_bundle.challenge_info = {
+                    "challenger": challenger,
+                    "claim_challenged": block_claim,
+                    "challenge_success": False,
+                    "who_lost_influence": challenger,
+                    "revealed_card": block_claim,
+                }
+            else:
+                # challenge succeeded which means blocker was lying
+                self.game.remove_influence(blocker)
+                
+                info_bundle.block_info["block_success"] = False
+                info_bundle.block_info["block_challenge_outcome"] = "challenger_wins"
+                info_bundle.challenge_info = {
+                    "challenger": challenger,
+                    "claim_challenged": block_claim,
+                    "challenge_success": True,
+                    "who_lost_influence": blocker,
+                }
+                
+                # block failed which means execute original action (if target still alive)
+                if self.game.influence[self.pending_target] > 0 or self.pending_action_name not in ["STEAL", "ASSASSINATE"]:
+                    self._execute_pending_action(info_bundle)
+                else:
+                    info_bundle.result = "succeeded"
+            
+            self._advance_turn()
+        else:
+            # accepted the block (no challenge)
+            info_bundle.result = "blocked"
+            info_bundle.block_info["block_success"] = True
+            self._advance_turn()
+        
+        done = self.game.is_game_over()
+        return reward, done, info_bundle
+    
+    def _is_action_blockable(self) -> bool:
+        return self.pending_action_name in ["FOREIGN_AID", "STEAL", "ASSASSINATE"]
+    
+    def _execute_pending_action(self, info_bundle: InfoBundle):
+        actor = self.pending_actor
+        target = self.pending_target
+        action_name = self.pending_action_name
+        
+        if action_name == "FOREIGN_AID":
+            self.game.players[actor] += 2
+            info_bundle.result = "succeeded"
+            
+        elif action_name == "TAX":
+            self.game.players[actor] += 3
+            info_bundle.result = "succeeded"
+            
+        elif action_name == "STEAL":
+            if self.game.influence[target] > 0:
+                steal_amt = min(2, self.game.players[target])
+                self.game.players[actor] += steal_amt
+                self.game.players[target] -= steal_amt
+                info_bundle.steal_transfer_amount = steal_amt
+            info_bundle.result = "succeeded"
+            
+        elif action_name == "EXCHANGE":
+            self.game.pick_cards(actor)
+            info_bundle.result = "succeeded"
+            
+        elif action_name == "ASSASSINATE":
+            # cost already paid in main action
+            if self.game.influence[target] > 0:
+                self.game.remove_influence(target)
+            info_bundle.result = "succeeded"
     
     # honest defender shows card, shuffles back, draws new
     def _reveal_and_replace_card(self, player: int, card: int) -> int:
@@ -379,23 +535,16 @@ class CoupEnv:
         
         return new_card
     
-    def _check_opponent_challenge(self, opponent: int, claimed_card: int) -> bool:
-        if self.opponent_agent is not None:
-            return self.opponent_agent.decide_challenge(self.game, opponent, claimed_card)
-        return random.random() < 0.2
-    
-    def _check_opponent_block(self, opponent: int, block_type: int) -> bool:
-        if self.game.influence[opponent] <= 0:
-            return False
-        
-        if self.opponent_agent is not None:
-            return self.opponent_agent.decide_block(self.game, opponent, block_type)
-        return random.random() < 0.3
-    
     def _advance_turn(self):
-        self.game.current_player = (self.game.current_player + 1) % 2
+        # find next alive player after pending_actor
+        next_player = (self.pending_actor + 1) % 2
+        if self.game.influence[next_player] <= 0:
+            next_player = self.pending_actor
+        
+        self.game.current_player = next_player
         self.turn_count += 1
         self.phase = "main"
+        self._clear_pending()
     
     def _add_to_history(self, action: int, actor: int, target: Optional[int]):
         entry = {
@@ -429,8 +578,8 @@ class CoupEnv:
             base_idx = i * ACTION_ENCODING_DIM
             if entry["action"] < NUM_ACTIONS:
                 history_vec[base_idx + entry["action"]] = 1.0
-            history_vec[base_idx + NUM_ACTIONS] = entry["actor"]
-            history_vec[base_idx + NUM_ACTIONS + 1] = entry["target"] if entry["target"] is not None else -1
+            history_vec[base_idx + NUM_ACTIONS] = float(entry["actor"])  # 0 or 1
+            history_vec[base_idx + NUM_ACTIONS + 1] = float(entry["target"]) if entry["target"] is not None else 0.5
         
         obs.extend(history_vec.tolist())
         
@@ -486,39 +635,6 @@ class CoupEnv:
         
         return mask
     
-    def _process_challenge_decision(
-        self,
-        action: int,
-        info_bundle: InfoBundle,
-    ) -> Tuple[float, bool, InfoBundle]:
-        # placeholder for multi-phase right now
-        reward = 0.0
-        done = self.game.is_game_over()
-        self._advance_turn()
-        return reward, done, info_bundle
-    
-    def _process_block_decision(
-        self,
-        action: int,
-        info_bundle: InfoBundle,
-    ) -> Tuple[float, bool, InfoBundle]:
-        # placeholder for multi-phase right now
-        reward = 0.0
-        done = self.game.is_game_over()
-        self._advance_turn()
-        return reward, done, info_bundle
-    
-    def _process_block_challenge_decision(
-        self,
-        action: int,
-        info_bundle: InfoBundle,
-    ) -> Tuple[float, bool, InfoBundle]:
-        # placeholder for multi-phase right now
-        reward = 0.0
-        done = self.game.is_game_over()
-        self._advance_turn()
-        return reward, done, info_bundle
-    
     def get_state(self) -> Dict[str, Any]:
         return {
             "game_state": self.game.get_state(),
@@ -554,6 +670,7 @@ class SelfPlayEnv:
         next_obs, reward, done, legal_mask, info = self.env.step(action)
         
         info["acting_player"] = current_player
+        info["phase"] = self.env.phase
         
         next_player = self.env.game.current_player if not done else -1
         

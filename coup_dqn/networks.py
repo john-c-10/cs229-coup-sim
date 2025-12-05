@@ -6,10 +6,7 @@ from typing import Tuple, Optional
 
 from .config import (
     DEVICE,
-    NUM_CARD_TYPES,
     NUM_ACTIONS,
-    CARD_EMBED_DIM,
-    ACTION_EMBED_DIM,
     TORSO_HIDDEN_DIMS,
     USE_LSTM,
     RNN_HIDDEN_DIM,
@@ -22,7 +19,7 @@ from .config import (
     NUM_ATOMS,
     V_MIN,
     V_MAX,
-    OBS_DIM,
+    OBS_DIM
 )
 
 # parametric noise layer (replaces eps-greedy exploration)
