@@ -360,12 +360,9 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Train DQN agent for Coup")
-    parser.add_argument("--episodes", type=int, default=NUM_EPISODES,
-                       help="Number of episodes to train")
-    parser.add_argument("--checkpoint-dir", type=str, default=CHECKPOINT_DIR,
-                       help="Directory for checkpoints")
-    parser.add_argument("--resume", type=str, default=None,
-                       help="Path to checkpoint to resume from")
+    parser.add_argument("--episodes", type=int, default=NUM_EPISODES, help="Number of episodes to train")
+    parser.add_argument("--checkpoint-dir", type=str, default=CHECKPOINT_DIR, help="Directory for checkpoints")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     
     args = parser.parse_args()
     
