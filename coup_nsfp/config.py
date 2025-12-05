@@ -21,17 +21,17 @@ ACTIONS = [
 NUM_ACTIONS = len(ACTIONS)
 
 # Discount factor
-GAMMA = 0.95
+GAMMA = 0.99
 
-# NFSP “mode” mixing: probability of using BR instead of AS
+# NFSP “mode” mixing: probability of using br instead of as
 BR_EPSILON_START = 0.1
-BR_EPSILON_END = 0.02
-BR_EPSILON_DECAY = 1e-5
+BR_EPSILON_END = 0.1
+BR_EPSILON_DECAY = 0
 
 # Epsilon-greedy inside BR DQN
 EPSILON_EXPLORE_START = 0.2
 EPSILON_EXPLORE_END = 0.05
-EPSILON_EXPLORE_DECAY = 1e-5
+EPSILON_EXPLORE_DECAY = 1e-4
 
 # Buffers / training
 BATCH_SIZE = 64

@@ -106,7 +106,8 @@ def calculate_reward(game, player, pre_coins, pre_opp_coins, pre_inf, pre_opp_in
     return reward
 
 
-def pretrain_against_baseline(agent, num_episodes=1000):
+def pretrain_against_baseline(agent, num_episodes=500):
+    # very limited pretrain
     print(f"Pretraining agent against NoLieBot for {num_episodes} rounds")
     
     baseline = NoLieBot()
@@ -217,7 +218,7 @@ def pretrain_against_baseline(agent, num_episodes=1000):
     print("Pretraining complete")
 
 
-def self_play_training(num_episodes=10_000, save_prefix="nfsp_coup", pretrain=True):
+def self_play_training(num_episodes=10000, save_prefix="nfsp_coup", pretrain=True):
     # Agent action to game move mapping
     action_to_move = {
         0: 4,   # Income
@@ -358,4 +359,4 @@ def self_play_training(num_episodes=10_000, save_prefix="nfsp_coup", pretrain=Tr
 
 
 if __name__ == "__main__":
-    self_play_training(num_episodes=20000, save_prefix="nfsp_coup_demo", pretrain=True)
+    self_play_training(num_episodes=10000, save_prefix="nfsp_coup_demo", pretrain=True)
