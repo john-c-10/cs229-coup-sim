@@ -359,4 +359,4 @@ def self_play_training(num_episodes=10000, save_prefix="nfsp_coup", pretrain=Tru
 
 
 if __name__ == "__main__":
-    self_play_training(num_episodes=5000, save_prefix="nfsp_coup_demo", pretrain=True)
+    self_play_training(num_episodes=10000, save_prefix="nfsp_coup_demo", pretrain=True)
