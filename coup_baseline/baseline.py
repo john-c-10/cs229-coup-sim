@@ -50,23 +50,23 @@ class HeuristicBot(Agent):
             return 6
         
         # assassinate if affordable and opponent has 1 influence
-        if 1 in valid_moves and opponent_influence == 1:
-            return 1
+        if 5 in valid_moves and opponent_influence == 1:
+            return 5
         
         # steal if opponent has coins
         if 3 in valid_moves and opponent_coins >= 2:
             return 3
         
         # tax (Duke) if we have low coins
-        if 0 in valid_moves and coins < 5:
-            return 0
+        if 2 in valid_moves and coins < 5:
+            return 2
         
         # foreign aid if we can't tax
-        if 5 in valid_moves and coins < 5:
-            return 5
+        if 1 in valid_moves and coins < 5:
+            return 1
         
         # income as fallback
-        return 4
+        return 0
     
     def decide_block(self, game: CoupGame, player: int, block_type: int) -> bool:
         opponent = (player + 1) % 2
@@ -140,27 +140,27 @@ class NoLieBot(Agent):
         
         # only claim cards we actually have
         # assassinate if we have assassin and opponent has 1 influence
-        if 1 in valid_moves and self._has_card(game, player, 1) and game.influence[opponent] == 1:
-            return 1
+        if 5 in valid_moves and self._has_card(game, player, 1) and game.influence[opponent] == 1:
+            return 5
         
         # steal if we have captain and opponent has coins
         if 3 in valid_moves and self._has_card(game, player, 3) and game.players[opponent] >= 2:
             return 3
         
         # tax if we have duke
-        if 0 in valid_moves and self._has_card(game, player, 0):
-            return 0
-        
-        # exchange if we have ambassador
-        if 2 in valid_moves and self._has_card(game, player, 2):
+        if 2 in valid_moves and self._has_card(game, player, 0):
             return 2
         
+        # exchange if we have ambassador
+        if 4 in valid_moves and self._has_card(game, player, 2):
+            return 4
+        
         # foreign aid if we can't claim any cards
-        if 5 in valid_moves:
-            return 5
+        if 1 in valid_moves:
+            return 1
         
         # income as fallback move
-        return 4
+        return 0
     
     def _has_card(self, game: CoupGame, player: int, card: int) -> bool:
         return game.roles[player][card] > 0

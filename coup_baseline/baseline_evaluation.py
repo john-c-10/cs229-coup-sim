@@ -6,7 +6,7 @@ from coup_baseline.baseline import MCTSAgent, RandomBot, NoLieBot, HeuristicBot
 from collections import defaultdict
 from game import CoupGame
 
-MOVE_NAMES = ["Tax", "Assassinate", "Exchange", "Steal", "Income", "Foreign Aid", "Coup"]
+MOVE_NAMES = ["Income", "Foreign Aid", "Tax", "Steal", "Exchange", "Assassinate", "Coup"]
 
 # simulator that runs games with agent hooks and tracks metrics for evaluation
 class CardTrackingSimulator:
@@ -22,26 +22,25 @@ class CardTrackingSimulator:
     def _attach_agent_hooks_with_tracking(self, game, agent0, agent1):
         challenge_tracker = self.challenge_tracker
         
-        def select_action_claim_wrapper(player, block_type):
+        def select_action_claim_wrapper(game_instance, player, block_type):
             if player == 0:
-                return agent0.decide_block(game, player, block_type)
+                return agent0.decide_block(game_instance, player, block_type)
             else:
-                return agent1.decide_block(game, player, block_type)
+                return agent1.decide_block(game_instance, player, block_type)
         
-        def select_action_lie_wrapper(player, claimed_card):
+        def select_action_lie_wrapper(game_instance, player, claimed_card):
             if player == 0:
-                return agent0.decide_challenge(game, player, claimed_card)
+                return agent0.decide_challenge(game_instance, player, claimed_card)
             else:
-                return agent1.decide_challenge(game, player, claimed_card)
-        
-        original_predict_lie = game.predict_lie
+                return agent1.decide_challenge(game_instance, player, claimed_card)
         
         def predict_lie_wrapper(self_instance, player, claimed_card):
             opponent = (player + 1) % 2
-            challenge = select_action_lie_wrapper(opponent, claimed_card)
+            challenge = self_instance.select_action_lie(opponent, claimed_card)
             
             if challenge:
-                challenge_tracker['made'][opponent] += 1
+                if self_instance is game:
+                    challenge_tracker['made'][opponent] += 1
                 card_in_hand = None
                 if isinstance(claimed_card, list) or isinstance(claimed_card, tuple):
                     claimed_card_1 = claimed_card[0]
@@ -67,18 +66,19 @@ class CardTrackingSimulator:
                     self_instance.roles[player][new_card] += 1
                     return "no lie"
                 else:
-                    challenge_tracker['successful'][opponent] += 1
+                    if self_instance is game:
+                        challenge_tracker['successful'][opponent] += 1
                     self_instance.remove_influence(player)
                     return "lie"
             else:
                 return False
         
         game.select_action_claim = types.MethodType(
-            lambda self, player, block_type: select_action_claim_wrapper(player, block_type),
+            lambda self, player, block_type: select_action_claim_wrapper(self, player, block_type),
             game
         )
         game.select_action_lie = types.MethodType(
-            lambda self, player, claimed_card: select_action_lie_wrapper(player, claimed_card),
+            lambda self, player, claimed_card: select_action_lie_wrapper(self, player, claimed_card),
             game
         )
         game.predict_lie = types.MethodType(predict_lie_wrapper, game)

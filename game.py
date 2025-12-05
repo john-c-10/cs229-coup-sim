@@ -10,12 +10,12 @@ import asyncio
 # 4 is contessa
 
 #valid moves:
-# - tax 0
-# - assassinate 1
-# - exchange 2
+# - income 0
+# - foreign aid 1
+# - tax 2
 # - steal 3
-# - income 4
-# - foreign aid 5
+# - exchange 4
+# - assassinate 5
 # - coup 6
 
 #can block:
@@ -73,27 +73,42 @@ class CoupGame:
         if move == 6 and coins < 7:
             return False
         # can't assassinate with < 3 coins
-        if move == 1 and coins < 3:
+        if move == 5 and coins < 3:
             return False
         return True
 
     def play_move(self, player, move):
-        # tax 0 (Duke, cannot be blocked, gain 3 coins)
-        # assassinate 1 (Assassin, can be blocked by Contessa, costs 3 coins)
-        # exchange 2 (Ambassador, cannot be blocked, exchange cards)
+        # income 0 (No role required, cannot be blocked, gain 1 coin)
+        # foreign aid 1 (No role required, can be blocked by Duke, gain 2 coins)
+        # tax 2 (Duke, cannot be blocked, gain 3 coins)
         # steal 3 (Captain, can be blocked by Captain/Ambassador, steal 2 coins)
-        # income 4 (No role required, cannot be blocked, gain 1 coin)
-        # foreign aid 5 (No role required, can be blocked by Duke, gain 2 coins)
+        # exchange 4 (Ambassador, cannot be blocked, exchange cards)
+        # assassinate 5 (Assassin, can be blocked by Contessa, costs 3 coins)
         # coup 6 (No role required, cannot be blocked, costs 7 coins, remove influence)
         
-        #default to income if the move is invalid
+        #default to valid move (coup or income) if the move is invalid
         if not self.is_valid_move(player, move):
-            move = 4
+            if self.players[player] >= 10:
+                move = 6
+            else:
+                move = 0
         
         opponent = (player + 1) % 2
 
-        # tax, gain 3 coins (claims duke)
+        # income, gain 1 coin (no claim, cannot be blocked)
         if move == 0:
+            self.players[player] += 1
+            return True
+        
+        # foreign aid, gain 2 coins, can be blocked by Duke
+        elif move == 1:
+            successful_block = self.check_blocks(opponent, 0)  # 0 = foreign aid block
+            if not successful_block:
+                self.players[player] += 2
+            return True
+        
+        # tax, gain 3 coins (claims duke)
+        elif move == 2:
             lie_result = self.predict_lie(player, 0)  # 0 = Duke
             if lie_result == "lie":
                 return False  # player caught lying, lost influence
@@ -101,31 +116,6 @@ class CoupGame:
                 self.players[player] += 3 # challenge and no lie
                 return True
             self.players[player] += 3
-            return True
-        
-        # assassinate, can be blocked by contessa, costs 3 coins
-        elif move == 1:
-            self.players[player] -= 3
-            lie_result = self.predict_lie(player, 1)  # 1 = Assassin
-            if lie_result == "lie":
-                return False  # player caught lying
-            elif lie_result == "no lie":
-                self.remove_influence(opponent)
-                return True
-            
-            # check if opponent blocks
-            successful_block = self.check_blocks(opponent, 1)
-            if not successful_block:
-                self.remove_influence(opponent)
-            return True
-
-        # exchange, cannot be blocked (claims ambassador)
-        elif move == 2:
-            lie_result = self.predict_lie(player, 2)  # 2 = Ambassador
-            if lie_result == "lie":
-                return False
-            elif lie_result == "no lie" or not lie_result:
-                self.pick_cards(player)
             return True
 
         # steal, can be blocked by Captain or Ambassador, steal 2 coins
@@ -146,17 +136,30 @@ class CoupGame:
                 self.players[opponent] -= stolen
                 self.players[player] += stolen
             return True
-        
-        # income, gain 1 coin (no claim, cannot be blocked)
+
+        # exchange, cannot be blocked (claims ambassador)
         elif move == 4:
-            self.players[player] += 1
+            lie_result = self.predict_lie(player, 2)  # 2 = Ambassador
+            if lie_result == "lie":
+                return False
+            elif lie_result == "no lie" or not lie_result:
+                self.pick_cards(player)
             return True
         
-        # foreign aid, gain 2 coins, can be blocked by Duke
+        # assassinate, can be blocked by contessa, costs 3 coins
         elif move == 5:
-            successful_block = self.check_blocks(opponent, 0)  # 0 = foreign aid block
+            self.players[player] -= 3
+            lie_result = self.predict_lie(player, 1)  # 1 = Assassin
+            if lie_result == "lie":
+                return False  # player caught lying
+            elif lie_result == "no lie":
+                self.remove_influence(opponent)
+                return True
+            
+            # check if opponent blocks
+            successful_block = self.check_blocks(opponent, 1)
             if not successful_block:
-                self.players[player] += 2
+                self.remove_influence(opponent)
             return True
         
         # coup, costs 7 coins, cannot be blocked
@@ -211,7 +214,8 @@ class CoupGame:
             return False
         elif lie_result == "no lie":
             return True
-        return False
+
+        return True
         # challenge = self.select_action_lie(opponent, claimed_card)
         
         # if challenge:
@@ -286,7 +290,7 @@ class CoupGame:
         if self.players[player] < 7:
             valid_moves.remove(6)
         if self.players[player] < 3:
-            valid_moves.remove(1)
+            valid_moves.remove(5)
         return valid_moves
     
     def is_game_over(self):
@@ -344,7 +348,7 @@ def main():
     print("Starting Coup Game...")
     game = CoupGame()
     
-    move_names = ["Tax", "Assassinate", "Exchange", "Steal", "Income", "Foreign Aid", "Coup"]
+    move_names = ["Income", "Foreign Aid", "Tax", "Steal", "Exchange", "Assassinate", "Coup"]
     
     print_game_state(game)
     
