@@ -158,17 +158,20 @@ def self_play_training(num_episodes=10_000, save_prefix="nfsp_coup"):
             reward = calculate_reward(game, current_player, pre_coins, pre_opp_coins, pre_inf, pre_opp_inf)
             
             done = game.is_game_over()
-            game.current_player = (game.current_player + 1) % 2
             turn += 1
             if turn >= MAX_TURNS_PER_GAME:
                 done = True
             
-            next_state = get_state_for_player(game, game.current_player, p0_hist, p1_hist)
+            # get next state from same player's perspective before switching
+            next_state = get_state_for_player(game, current_player, p0_hist, p1_hist)
             
             agent.store_transition(state, action, reward, next_state, done, mode_used)
             agent.train_step()
             
-            state = next_state
+            # switch turns
+            game.current_player = (game.current_player + 1) % 2
+            if not done:
+                state = get_state_for_player(game, game.current_player, p0_hist, p1_hist)
 
         game_state_final = game.get_state()
         if game_state_final['influence'][0] > game_state_final['influence'][1]:
@@ -190,4 +193,4 @@ def self_play_training(num_episodes=10_000, save_prefix="nfsp_coup"):
 
 if __name__ == "__main__":
     # Adjust num_episodes as needed
-    self_play_training(num_episodes=50000, save_prefix="nfsp_coup_demo")
+    self_play_training(num_episodes=5000, save_prefix="nfsp_coup_demo")

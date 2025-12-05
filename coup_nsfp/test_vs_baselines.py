@@ -125,12 +125,12 @@ def test_nsfp_vs_baseline(
     print(f"{baseline_name} wins: {wins_baseline} ({wins_baseline/num_games*100:.1f}%)")
     print(f"Draws: {num_games - wins_nsfp - wins_baseline}")
     print(f"Average game length: {np.mean(total_turns):.1f} turns")
-    print(f"NSFP Action Distribution:")
+    print(f"NFSP Action Distribution:")
     total_actions = sum(nsfp_action_counts.values())
     for action_idx, count in sorted(nsfp_action_counts.items(), key=lambda x: x[1], reverse=True):
         if total_actions > 0:
             pct = count / total_actions * 100
-            print(f"{ACTIONS[action_idx]:12s}: {count:4d} ({pct:5.1f}%)")
+            print(f"{ACTIONS[action_idx]:12s}: {count:4d}  ({pct:.1f}%)")
     
     return {
         'wins_nsfp': wins_nsfp,
