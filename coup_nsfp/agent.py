@@ -19,10 +19,7 @@ class NFSPAgent:
         self.state_dim = state_dim
 
         self.br_policy = QNetwork(state_dim, NUM_ACTIONS).to(DEVICE)
-
-        #target is a delayed copy of br_policy that is used to compute desired target value (r + max a' from reached state s')
         self.br_target = QNetwork(state_dim, NUM_ACTIONS).to(DEVICE)
-
         self.br_target.load_state_dict(self.br_policy.state_dict())
         self.br_optimizer = optim.Adam(self.br_policy.parameters(), lr=LR_BR)
 
@@ -45,9 +42,6 @@ class NFSPAgent:
         self.total_steps = 0
 
 
-    #take numpy array and turn into tensor of (1, state_dim)
-    #needed for pytorch and backprop
-
     def _to_tensor(self, state: np.ndarray) -> torch.Tensor:
         return torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
 
@@ -55,13 +49,13 @@ class NFSPAgent:
     def select_action(self, state: np.ndarray, training: bool = True, valid_actions=None):
         self.total_steps += 1
 
-        #goes from .1 to .02 over time
+        # decay epsilon for br mode selection
         self.br_mode_epsilon = max(
             BR_EPSILON_END,
             self.br_mode_epsilon - BR_EPSILON_DECAY
         )
 
-        # choose which head (BR or AS) to use
+        # choose which policy (br or as) to use
         if training and random.random() < self.br_mode_epsilon:
             mode = "BR"
         else:
@@ -75,13 +69,12 @@ class NFSPAgent:
         return action, mode
 
     def _select_br_action(self, state: np.ndarray, training: bool = True, valid_actions=None) -> int:
-        #this is random vs greedy factor
+        #br network q-learning act
         self.br_explore_epsilon = max(
             EPSILON_EXPLORE_END,
             self.br_explore_epsilon - EPSILON_EXPLORE_DECAY
         )
 
-        # If no valid_actions provided, all actions are valid
         if valid_actions is None:
             valid_actions = list(range(NUM_ACTIONS))
 
@@ -90,9 +83,9 @@ class NFSPAgent:
 
         with torch.no_grad():
             s = self._to_tensor(state)
-            q_values = self.br_policy(s)[0]  # shape (num_actions,)
+            q_values = self.br_policy(s)[0]
             
-            # Mask out invalid actions by setting their Q-values to -inf
+            # Mask invalid actions
             masked_q = q_values.clone()
             invalid_mask = torch.ones(NUM_ACTIONS, dtype=torch.bool, device=DEVICE)
             invalid_mask[valid_actions] = False
@@ -101,15 +94,15 @@ class NFSPAgent:
             return int(masked_q.argmax().item())
 
     def _select_as_action(self, state: np.ndarray, training: bool = True, valid_actions=None) -> int:
-        # If no valid_actions provided, all actions are valid
+        #avg strat act
         if valid_actions is None:
             valid_actions = list(range(NUM_ACTIONS))
             
         with torch.no_grad():
             s = self._to_tensor(state)
-            logits = self.as_policy(s)[0]  # shape (num_actions,)
+            logits = self.as_policy(s)[0]
             
-            # Mask out invalid actions by setting their logits to -inf before softmax
+            # Mask invalid actions
             masked_logits = logits.clone()
             invalid_mask = torch.ones(NUM_ACTIONS, dtype=torch.bool, device=DEVICE)
             invalid_mask[valid_actions] = False
@@ -120,7 +113,6 @@ class NFSPAgent:
         if training:
             return int(np.random.choice(NUM_ACTIONS, p=probs))
         else:
-            #deterministic choice in order for predictability like the best according to history
             return int(np.argmax(probs))
 
 
@@ -131,9 +123,7 @@ class NFSPAgent:
         
 
     def train_step(self):
-
-        #once reaches certain size, we want to train on them and update our model
-
+        #br and as
         if len(self.rl_buffer) >= BATCH_SIZE:
             self._train_br()
 
@@ -141,11 +131,8 @@ class NFSPAgent:
             self._train_as()
 
     def _train_br(self):
-
-        #sample from buffer
+        #br newwork q-learning
         batch = self.rl_buffer.sample(BATCH_SIZE)
-    
-
 
         state_batch = torch.tensor(
             np.stack(batch.state), dtype=torch.float32, device=DEVICE
@@ -157,40 +144,34 @@ class NFSPAgent:
         )
         done_batch = torch.tensor(batch.done, dtype=torch.float32, device=DEVICE).unsqueeze(1)
 
+        # Current Q-values
         q_values = self.br_policy(state_batch).gather(1, action_batch)
 
+        # Target Q-values using target network
         with torch.no_grad():
             max_next_q = self.br_target(next_state_batch).max(dim=1, keepdim=True)[0]
             target_q = reward_batch + (1.0 - done_batch) * GAMMA * max_next_q
-            #target_q = r + γ max_a' Q_target(s', a')
 
-
-        #real-valued scalars so mse makes sense
+        # MSE
         loss = nn.MSELoss()(q_values, target_q)
 
-        #clears existing grad
         self.br_optimizer.zero_grad()
-        #new grad that is based on q_values forward pass
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.br_policy.parameters(), 5.0)
         self.br_optimizer.step()
 
-        # target update
-        #we want to update target every once in a while
+        # update target network
         if self.total_steps % TARGET_UPDATE_FREQ == 0:
             self.br_target.load_state_dict(self.br_policy.state_dict())
 
     def _train_as(self):
+        #avg strat
         states, actions = self.sl_buffer.sample(BATCH_SIZE)
         states = torch.tensor(states, dtype=torch.float32, device=DEVICE)
         actions = torch.tensor(actions, dtype=torch.int64, device=DEVICE)
 
         logits = self.as_policy(states)
-
-        #standard loss for classification
         loss = nn.CrossEntropyLoss()(logits, actions)
-
-        #trying to minimize difference between predicted action and actual action
 
         self.as_optimizer.zero_grad()
         loss.backward()
@@ -263,7 +244,7 @@ class NFSPAgent:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.challenge_policy.parameters(), 5.0)
             self.challenge_optimizer.step()
-    #save all of our models (q network, q target network, avg strategy network, block network, challenge network)
+
     def save(self, path_prefix: str):
         torch.save(self.br_policy.state_dict(), f"{path_prefix}_q.pt")
         torch.save(self.br_target.state_dict(), f"{path_prefix}_q_target.pt")

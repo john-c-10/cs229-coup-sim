@@ -110,10 +110,10 @@ class RandomBot(Agent):
         return self.rng.choice(valid_moves)
     
     def decide_block(self, game: CoupGame, player: int, block_type: int) -> bool:
-        return self.rng.random() < 0.5
+        return self.rng.random() < 0.3
     
     def decide_challenge(self, game: CoupGame, player: int, claimed_card: int) -> bool:
-        return self.rng.random() < 0.5
+        return self.rng.random() < 0.3
 
 
 class NoLieBot(Agent):
