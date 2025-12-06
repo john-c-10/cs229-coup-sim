@@ -178,11 +178,6 @@ def run_full_evaluation(nfsp_model_path, num_games_per_matchup=100):
     all_losses = sum(r['wins_baseline'] for r in results.values())
     total_games = all_wins + all_losses
     
-    # print(f"{'Overall':<25} {'First':<10} {all_wins/total_games*100:>9.1f}%")
-    # print(f"\nTotal games:  {total_games}")
-    # print(f"Total wins:   {all_wins}")
-    # print(f"Total losses: {all_losses}")
-    
     
     return results
 
